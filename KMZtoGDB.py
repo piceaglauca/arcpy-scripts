@@ -31,9 +31,27 @@ class gdbAccess:
     def startEditing(self):
         self.editor.startEditing()
         self.editor.startOperation()
+        #self.search = {'Point':    arcpy.da.SearchCursor (self.fc_points, self.attr_points),
+        #               'Polyline': arcpy.da.SearchCursor (self.fc_lines, self.attr_lines)}
         self.cursor = {'Point':    arcpy.da.InsertCursor (self.fc_points, self.attr_points),
                        'Polyline': arcpy.da.InsertCursor (self.fc_lines, self.attr_lines),
                        'Photos':   arcpy.da.InsertCursor (self.table_photos, self.attr_photos)}
+
+    def searchRow (self, feature):
+        if feature.featureType == "Point":
+            fc   = self.fc_points
+            attr = self.attr_points
+        elif feature.featureType == "Polyline":
+            fc   = self.fc_lines
+            attr = self.attr_lines
+
+        where=u"{} = '{}' And {} = date '{}'".format(arcpy.AddFieldDelimiters(fc, 'Name'), feature.name,
+													 arcpy.AddFieldDelimiters(fc, 'Date'), feature.date)
+        return arcpy.da.SearchCursor (fc, attr, where_clause=where)
+
+    def insertRowIfNew (self, feature):
+        if len(list(self.searchRow(feature))) == 0:
+            self.insertRow (feature)
 
     def insertRow (self, feature):
         try: 
@@ -57,7 +75,7 @@ class gdbAccess:
 
     def __del__ (self):
         if self.editor.isEditing:
-            self.editor.stopEditing(False)
+            self.stopEditing(False)
 
 class Feature:
     gcs_sr = arcpy.SpatialReference(4326) # Lat Long: Geographic Coordinate System WGS84
@@ -156,7 +174,7 @@ def processKMZ(kmzDOM, filename):
 
     for dom in domPlacemarks:
         feature = Feature(dom, filename)
-        gdb.insertRow(feature)
+        gdb.insertRowIfNew(feature)
 
         #print ('Feature is type: ' + feature.featureType)
         #print ('\t  name:\t' + feature.name)
