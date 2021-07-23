@@ -11,6 +11,46 @@ RE_COORDS = re.compile('(-?[0-9]+\.[0-9]+),([0-9]+\.[0-9]+),')
 RE_DATE = re.compile('([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])T([0-9][0-9]):([0-9][0-9]):([0-9][0-9])')
 RE_IMG = re.compile('<img src="(images[^"]*)"')
 
+class KMZ:
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.filename = os.path.basename(filepath)
+        self.dirname = filepath[:-(len(self.filename) + 1)]
+
+    def open(self):
+        if os.access (self.filepath, os.R_OK):
+            self.kmz = zipfile.ZipFile(self.filepath, 'r')
+        else:
+            print ('KMZtoGDB: could not open KMZ: ' + self.filepath)
+            sys.exit(1)
+
+    def getDOM (self):
+        kml = 'doc.kml'
+        if kml in self.kmz.namelist():
+            return parseDOM(self.kmz.open(kml))
+        else:
+            print ('KMZtoGDB: invalid KMZ.')
+            sys.exit(1)
+
+    def process(self):
+        kmzDOM = self.getDOM()
+        domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
+        gdb = gdbAccess ()
+        gdb.startEditing()
+
+        for dom in domPlacemarks:
+            feature = Feature(dom, self.filename)
+            gdb.insertRowIfNew(feature)
+
+            #print ('Feature is type: ' + feature.featureType)
+            #print ('\t  name:\t' + feature.name)
+            #print ('\t  date:\t' + feature.date.isoformat())
+            #print ('\t  desc:\t' + feature.description)
+            #print ('\tphotos:\t' + str(feature.photos))
+            #print ('\tcoords:\t' + str(feature.shape.firstPoint.X) + ',' + str(feature.shape.firstPoint.Y))
+
+        gdb.stopEditing(True)
+
 class gdbAccess:
     ProjectFolder = 'G:/Projects/Various_Clients/Galore Creek/Field Data'
     GDB = ProjectFolder + '/testing.gdb'
@@ -152,42 +192,8 @@ class Feature:
 
         return description, photos
 
-def openKMZ(filename):
-    if os.access (filename, os.R_OK):
-        return zipfile.ZipFile(filename, 'r')
-    else:
-        print ('KMZtoGDB: could not open KMZ: ' + filename)
-        sys.exit(1)
-
-def openDOM (kmz):
-    kml = 'doc.kml'
-    if kml in kmz.namelist():
-        return parseDOM(kmz.open(kml))
-    else:
-        print ('KMZtoGDB: invalid KMZ.')
-        sys.exit(1)
-
-def processKMZ(kmzDOM, filename):
-    domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
-    gdb = gdbAccess ()
-    gdb.startEditing()
-
-    for dom in domPlacemarks:
-        feature = Feature(dom, filename)
-        gdb.insertRowIfNew(feature)
-
-        #print ('Feature is type: ' + feature.featureType)
-        #print ('\t  name:\t' + feature.name)
-        #print ('\t  date:\t' + feature.date.isoformat())
-        #print ('\t  desc:\t' + feature.description)
-        #print ('\tphotos:\t' + str(feature.photos))
-        #print ('\tcoords:\t' + str(feature.shape.firstPoint.X) + ',' + str(feature.shape.firstPoint.Y))
-
-    gdb.stopEditing(True)
-
 def KMZtoGDB(**kwargs):
     filename = kwargs.get('kmz')
-    kmz = openKMZ(filename)
-    kmzDOM = openDOM(kmz)
-
-    processKMZ(kmzDOM, os.path.basename(filename))
+    kmz = KMZ(filename)
+    kmz.open()
+    kmz.process()
