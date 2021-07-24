@@ -40,7 +40,7 @@ class KMZ:
     def process(self, gdbpath):
         kmzDOM = self.getDOM()
         domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
-        gdb = gdbAccess (gdbpath)
+        gdb = GDB (gdbpath)
         gdb.startEditing()
 
         photoList = {}
@@ -70,13 +70,13 @@ class KMZ:
 
         gdb.stopEditing(True)
 
-class gdbAccess:
+class GDB:
     def __init__(self, gdbpath):
-        self.GDB = gdbpath
+        self.gdbpath = gdbpath
         self.projectFolder = os.path.dirname(gdbpath)
         photo_dir = self.projectFolder + '/KMZPhotos'
 
-        arcpy.env.workspace = self.GDB
+        arcpy.env.workspace = self.gdbpath
 
         self.fc_points = 'KMLPoint'
         self.attr_points = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
@@ -94,7 +94,7 @@ class gdbAccess:
                 sys.exit(1)
 
     def startEditing(self):
-        self.editor = arcpy.da.Editor(self.GDB)
+        self.editor = arcpy.da.Editor(self.gdbpath)
         self.editor.startEditing()
         self.editor.startOperation()
         #self.search = {'Point':    arcpy.da.SearchCursor (self.fc_points, self.attr_points),
