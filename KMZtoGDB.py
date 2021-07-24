@@ -11,11 +11,16 @@ RE_COORDS = re.compile('(-?[0-9]+\.[0-9]+),([0-9]+\.[0-9]+),')
 RE_DATE = re.compile('([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])T([0-9][0-9]):([0-9][0-9]):([0-9][0-9])')
 RE_IMG = re.compile('<img src="(images[^"]*)"')
 
+def sanitizeFilename (filename):
+    validfilechars = "-_.() abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    return ''.join (c for c in filename if c in validfilechars)
+
 class KMZ:
     def __init__(self, filepath):
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
-        self.dirname = filepath[:-(len(self.filename) + 1)]
+        self.dirname = os.path.dirname(filepath)
+        self.photodir = self.dirname + '/KMZPhotos/'
 
     def open(self):
         if os.access (self.filepath, os.R_OK):
@@ -32,43 +37,64 @@ class KMZ:
             print ('KMZtoGDB: invalid KMZ.')
             sys.exit(1)
 
-    def process(self):
+    def process(self, gdbpath):
         kmzDOM = self.getDOM()
         domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
-        gdb = gdbAccess ()
+        gdb = gdbAccess (gdbpath)
         gdb.startEditing()
 
+        photoList = {}
         for dom in domPlacemarks:
             feature = Feature(dom, self.filename)
-            gdb.insertRowIfNew(feature)
+            if gdb.insertRowIfNew(feature): # True if row inserted
+                for kmzPhotoPath, gdbPhotoPath in feature.photos:
+                    if not kmzPhotoPath in photoList.keys():
+                        photoList[kmzPhotoPath] = gdbPhotoPath
 
-            #print ('Feature is type: ' + feature.featureType)
-            #print ('\t  name:\t' + feature.name)
-            #print ('\t  date:\t' + feature.date.isoformat())
-            #print ('\t  desc:\t' + feature.description)
-            #print ('\tphotos:\t' + str(feature.photos))
-            #print ('\tcoords:\t' + str(feature.shape.firstPoint.X) + ',' + str(feature.shape.firstPoint.Y))
+        if len(photoList) > 0:
+            for photo in self.kmz.namelist():
+                if not photo.startswith('images/'):
+                    continue
+                else:
+                    kmzPhotoPath = sanitizeFilename(os.path.basename(photo))
+                    if not kmzPhotoPath in photoList.keys():
+                        print ("problem with " + photo)
+                    else:
+                        path = self.photodir + photoList[kmzPhotoPath]
+                        try:
+                            with open(path, 'wb') as f:
+                                f.write(self.kmz.read(photo))
+                        except:
+                            print ("problem writing " + kmzPhotoPath + " to " + path)
+                            raise
 
         gdb.stopEditing(True)
 
 class gdbAccess:
-    ProjectFolder = 'G:/Projects/Various_Clients/Galore Creek/Field Data'
-    GDB = ProjectFolder + '/testing.gdb'
-    photo_dir = ProjectFolder + '/KMZPhotos'
+    def __init__(self, gdbpath):
+        self.GDB = gdbpath
+        self.projectFolder = os.path.dirname(gdbpath)
+        photo_dir = self.projectFolder + '/KMZPhotos'
 
-    fc_points = GDB + '/KMLPoint'
-    attr_points = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
+        arcpy.env.workspace = self.GDB
 
-    fc_lines = GDB + '/KMLLine'
-    attr_lines = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
+        self.fc_points = 'KMLPoint'
+        self.attr_points = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
 
-    table_photos = GDB + '/Photos'
-    attr_photos = ['Feature_Type', 'Feature_OBJECTID', 'Photo_Path']
+        self.fc_lines = 'KMLLine'
+        self.attr_lines = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
 
-    def __init__(self):
-        self.editor = arcpy.da.Editor(self.GDB)
+        self.table_photos = 'Photos'
+        self.attr_photos = ['Feature_Type', 'Feature_OBJECTID', 'Photo_Path']
+
+        gdbSchema = arcpy.ListFeatureClasses() + arcpy.ListTables()
+        for fc in [self.fc_points, self.fc_lines, self.table_photos]:
+            if fc not in gdbSchema:
+                print ("Unrecognized geodatabase")
+                sys.exit(1)
 
     def startEditing(self):
+        self.editor = arcpy.da.Editor(self.GDB)
         self.editor.startEditing()
         self.editor.startOperation()
         #self.search = {'Point':    arcpy.da.SearchCursor (self.fc_points, self.attr_points),
@@ -92,6 +118,9 @@ class gdbAccess:
     def insertRowIfNew (self, feature):
         if len(list(self.searchRow(feature))) == 0:
             self.insertRow (feature)
+            return True
+        else:
+            return False
 
     def insertRow (self, feature):
         try: 
@@ -100,13 +129,13 @@ class gdbAccess:
             print ("Error inserting new row: " + str(feature.toTuple()))
             raise
         if len(feature.photos) > 0:
-            for photo in feature.photos:
+            for kmzPhotoPath, gdbPhotoPath in feature.photos: # kmzPhotoPath not used here
                 # set photopath to be <kmz filename w/o .kmz>_<photo name>.jpg
-                photopath = feature.filename[:-4] + '_' + photo[len('images/'):]
+                #photopath = feature.filename[:-4] + '_' + photo[len('images/'):]
                 try:
-                    self.cursor['Photos'].insertRow ((feature.featureType, objectid, photopath))
+                    self.cursor['Photos'].insertRow ((feature.featureType, objectid, gdbPhotoPath))
                 except RuntimeError:
-                    print ("Error inserting photos: " + photopath)
+                    print ("Error inserting photos: " + gdbPhotoPath)
                     raise
     
     def stopEditing (self, commit=False):
@@ -122,17 +151,18 @@ class Feature:
     albers_sr = arcpy.SpatialReference(3005) # Albers
 
     def __init__(self, dom, filename):
-        self.name = getName(dom)
-        self.date = getDate(dom)
-        self.description, self.photos = getExtendedData(dom)
-        self.featureType, self.shape = getShape(dom)
+        self.dom = dom
         self.filename = filename
+        self.name = self.getName()
+        self.date = self.getDate()
+        self.description, self.photos = self.getExtendedData()
+        self.featureType, self.shape = self.getShape()
 
     def toTuple(self):
         return (self.name, self.description, self.date, self.filename, self.shape)
 
-    def getName(feature):
-        name = feature.getElementsByTagName("name")[0].childNodes[0].data
+    def getName(self):
+        name = self.dom.getElementsByTagName("name")[0].childNodes[0].data
 
         prefix="<![CDATA["
         suffix="]]>"
@@ -145,8 +175,8 @@ class Feature:
 
         return name
 
-    def getDate(feature):
-        raw = feature.getElementsByTagName("when")[0].childNodes[0].data
+    def getDate(self):
+        raw = self.dom.getElementsByTagName("when")[0].childNodes[0].data
         match = RE_DATE.search(raw)
         return datetime.datetime(int(match.group(1)),
                                  int(match.group(2)),
@@ -155,8 +185,8 @@ class Feature:
                                  int(match.group(5)),
                                  int(match.group(6)))
 
-    def getShape(feature):
-        raw = feature.getElementsByTagName("coordinates")[0].childNodes[0].data
+    def getShape(self):
+        raw = self.dom.getElementsByTagName("coordinates")[0].childNodes[0].data
 
         match = RE_COORDS.findall(raw, re.MULTILINE)
         points = []
@@ -165,35 +195,41 @@ class Feature:
 
         if len(points) == 1:
             featureType = "Point"
-            feature = arcpy.PointGeometry(points[0], gcs_sr)
+            feature = arcpy.PointGeometry(points[0], self.gcs_sr)
         else:
             featureType = "Polyline"
-            feature = arcpy.Polyline(arcpy.Array(points), gcs_sr)
+            feature = arcpy.Polyline(arcpy.Array(points), self.gcs_sr)
 
-        projectedFeature = feature.projectAs(albers_sr)
+        projectedFeature = feature.projectAs(self.albers_sr)
 
         return featureType, projectedFeature
 
-    def getPhotoList(s):
-        raw = s.childNodes[0].data
-        return RE_IMG.findall(raw)
+    def getPhotoList(self, dom):
+        raw = dom.childNodes[0].data
 
-    def getExtendedData(feature):
+        photoList = []
+        for photo in RE_IMG.findall(raw):
+            kmzImagePath = sanitizeFilename(photo[len('images/'):])
+            gdbImagePath = self.filename[:-4] + '_' + kmzImagePath
+            photoList.append([kmzImagePath, gdbImagePath]) 
+
+        return photoList
+
+    def getExtendedData(self):
         description = ""
         photos = []
 
-        simpledata = feature.getElementsByTagName("SimpleData")
+        simpledata = self.dom.getElementsByTagName("SimpleData")
 
         for s in simpledata:
             if s.getAttribute("name") == "Description":
                 description = s.childNodes[0].data
             elif s.getAttribute("name") == "pdfmaps_photos":
-                photos = getPhotoList(s)
+                photos = self.getPhotoList(s)
 
         return description, photos
 
 def KMZtoGDB(**kwargs):
-    filename = kwargs.get('kmz')
-    kmz = KMZ(filename)
+    kmz = KMZ(kwargs.get('kmz'))
     kmz.open()
-    kmz.process()
+    kmz.process(kwargs.get('gdb'))
