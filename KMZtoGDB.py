@@ -33,21 +33,23 @@ class KMZ:
         self.kmz = zipfile.ZipFile(self.filepath, 'r')
 
         if not os.path.isdir(self.photodir) and os.path.isfile(self.photodir):
-            raise IOError ("Photo directory is a file. Choose a folder to save photos.")
+            arcpy.AddError ("Photo directory is a file. Choose a folder to save photos.")
+            raise arcpy.ExecuteError
         elif not os.path.isdir(self.photodir):
             try:
                 os.mkdir(self.photodir)
             except IOError as e:
                 if e.errno == errno.EACCES:
-                    raise IOError ("Permission denied when trying to create photo directory.")
-                raise
+                    arcpy.AddError ("Permission denied when trying to create photo directory.")
+                raise arcpy.ExecuteError
 
     def getDOM (self):
         kml = 'doc.kml'
         try:
             return parseDOM(self.kmz.open(kml))
         except:
-            raise IOError ("Invalid KMZ.")
+            arcpy.AddError ("Invalid KMZ.")
+            raise arcpy.ExecuteError
 
     def process(self, gdb):
         kmzDOM = self.getDOM()
@@ -76,7 +78,8 @@ class KMZ:
                             with open(path, 'wb') as f:
                                 f.write(self.kmz.read(photo))
                         except:
-                            raise IOError ("Problem writing " + kmzPhotoPath + " to " + path)
+                            arcpy.AddError ("Problem writing " + kmzPhotoPath + " to " + path)
+                            raise arcpy.ExecuteError
 
         gdb.stopEditing(True)
 
@@ -119,7 +122,8 @@ class GDB:
         gdbSchema = arcpy.ListFeatureClasses() + arcpy.ListTables()
         for fc in [self.fc_points, self.fc_lines, self.table_photos]:
             if fc not in gdbSchema:
-                raise IOError ("Unable to verify or create geodatabase.")
+                arcpy.AddError ("Unable to verify or create geodatabase.")
+                raise arcpy.ExecuteError
 
     def startEditing(self):
         self.editor = arcpy.da.Editor(self.gdbpath)
@@ -152,15 +156,15 @@ class GDB:
         try: 
             objectid = self.cursor[feature.featureType].insertRow(feature.toTuple())
         except RuntimeError:
-            print ("Error inserting new row: " + str(feature.toTuple()))
-            raise
+            arcpy.AddError ("Error inserting new row: " + str(feature.toTuple()))
+            raise arcpy.ExecuteError
         if len(feature.photos) > 0:
             for kmzPhotoPath, gdbPhotoPath in feature.photos: # kmzPhotoPath not used here
                 try:
                     self.cursor['Photos'].insertRow ((feature.featureType, objectid, gdbPhotoPath))
                 except RuntimeError:
-                    print ("Error inserting photos: " + gdbPhotoPath)
-                    raise
+                    arcpy.AddError ("Error inserting photos to table: " + gdbPhotoPath)
+                    raise arcpy.ExecuteError
     
     def stopEditing (self, commit=False):
         self.editor.stopOperation()
