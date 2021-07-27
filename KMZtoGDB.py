@@ -15,22 +15,48 @@ def sanitizeFilename (filename):
     validfilechars = "!@#$%^&()[]{};-_+=\'~,. abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     return ''.join (c for c in filename if c in validfilechars)
 
-class KMZ:
-    def __init__(self, filepath, photos_path):
+class KML:
+    def __init__(self, filepath):
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
         self.dirname = os.path.dirname(filepath)
-        self.photodir = os.path.join (self.dirname, photos_path)
 
-        # The below is not necessary, since the ArcToolbox already does file existence checking.
-        #try:
-        #    self.kmz = zipfile.ZipFile(self.filepath, 'r')
-        #except IOError as e:
-        #    if e.errno == errno.EACCES:
-        #        raise IOError ("Permission denied when trying to access KMZ.")
-        #    raise
-        #TODO Handle kml files
-        self.kmz = zipfile.ZipFile(self.filepath, 'r')
+        self.open()
+
+    def open(self):
+        try:
+            self.data = open(self.filepath, 'r')
+        except:
+            arcpy.AddError ("Invalid KML.")
+            raise arcpy.ExecuteError
+
+    def getDOM (self):
+        return parseDOM(self.data)
+
+    def process(self, gdb):
+        kmlDOM = self.getDOM()
+        gdb.startEditing()
+
+        newFeatures = self.insertNewFeatures(kmlDOM)
+
+        gdb.stopEditing(True)
+
+        return newFeatures
+
+    def insertNewFeatures(self, kmlDOM):
+        domPlacemarks = kmlDOM.getElementsByTagName("Placemark")
+        featureList = []
+        for dom in domPlacemarks:
+            feature = Feature(dom, self.filename)
+            if gdb.insertRowIfNew(feature): # True if row inserted
+                featureList.append(feature)
+
+        return featureList
+
+class KMZ (KML):
+    def __init__(self, filepath, photos_path):
+        KML.__init__(self, filepath)
+        self.photodir = os.path.join (self.dirname, photos_path)
 
         if not os.path.isdir(self.photodir) and os.path.isfile(self.photodir):
             arcpy.AddError ("Photo directory is a file. Choose a folder to save photos.")
@@ -43,26 +69,29 @@ class KMZ:
                     arcpy.AddError ("Permission denied when trying to create photo directory.")
                 raise arcpy.ExecuteError
 
-    def getDOM (self):
+    def open(self):
         kml = 'doc.kml'
         try:
-            return parseDOM(self.kmz.open(kml))
+            self.kmz = zipfile.ZipFile(self.filepath, 'r')
+            self.data = self.kmz.open(kml)
         except:
             arcpy.AddError ("Invalid KMZ.")
             raise arcpy.ExecuteError
 
+    # Implemented in superclass. See KML.getDOM()
+    #def getDOM (self):
+    #    return parseDOM(self.data)
+
     def process(self, gdb):
         kmzDOM = self.getDOM()
-        domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
         gdb.startEditing()
 
+        newFeatures = KML.insertNewFeatures(self, kmzDOM)
         photoList = {}
-        for dom in domPlacemarks:
-            feature = Feature(dom, self.filename)
-            if gdb.insertRowIfNew(feature): # True if row inserted
-                for kmzPhotoPath, gdbPhotoPath in feature.photos:
-                    if not kmzPhotoPath in photoList.keys():
-                        photoList[kmzPhotoPath] = gdbPhotoPath
+        for feature in newFeatures:
+            for kmzPhotoPath, gdbPhotoPath in feature.photos:
+                if not kmzPhotoPath in photoList.keys():
+                    photoList[kmzPhotoPath] = gdbPhotoPath
 
         if len(photoList) > 0:
             for photo in self.kmz.namelist():
@@ -92,10 +121,6 @@ class GDB:
 
         self.projectFolder = os.path.dirname(gdbpath)
 
-        # The below is not necessary, since the ArcToolbox already does file existence checking.
-        #if not arcpy.Exists(self.gdbpath):
-        #    arcpy.CreateFileGDB_management(self.projectFolder, os.path.basename(self.gdbpath))
-
         arcpy.env.workspace = self.gdbpath
         self.attr_points = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
         self.attr_lines = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
@@ -113,6 +138,9 @@ class GDB:
             arcpy.AddField_management(fc, 'Description', 'TEXT', field_length=1000)
             arcpy.AddField_management(fc, 'Date', 'DATE', field_is_required="REQUIRED")
             arcpy.AddField_management(fc, 'Origin_file', 'TEXT', field_length=250)
+
+        # Even if a KML was specified, rather than a KMZ, it's worth creating this table
+        # if it doesn't exist. It's possible that a KMZ will be loaded into the same gdb.
         if not arcpy.Exists(self.table_photos):
             table = arcpy.CreateTable_management(self.gdbpath, self.table_photos)
             arcpy.AddField_management(table, 'Feature_Type', 'TEXT', field_length=10)
@@ -233,6 +261,9 @@ class Feature:
         return featureType, projectedFeature
 
     def getPhotoList(self, dom):
+        if isKML(self.filename):
+            return []
+
         raw = dom.childNodes[0].data
 
         photoList = []
@@ -257,10 +288,17 @@ class Feature:
 
         return description, photos
 
-def DeactivateKMZtoGDB(**kwargs):
-    kmz = KMZ(kwargs.get('kmz'))
-    kmz.open()
-    kmz.process(kwargs.get('gdb'))
+def isKMZ (filename):
+    return filename[-3:].lower() == 'kmz'
+
+def isKML (filename):
+    return filename[-3:].lower() == 'kml'
+
+def getDataObj (filename, photos_path):
+    if isKMZ(filename):
+        return KMZ(filename, photos_path)
+    elif isKML(filename):
+        return KML(filename)
 
 kmz_path     = arcpy.GetParameterAsText(1)
 gdb_path     = arcpy.GetParameterAsText(2)
@@ -269,6 +307,6 @@ fc_lines     = arcpy.GetParameterAsText(4)
 table_photos = arcpy.GetParameterAsText(5)
 photos_path  = arcpy.GetParameterAsText(6)
 
-kmz = KMZ(kmz_path, photos_path)
+data = getDataObj(kmz_path, photos_path)
 gdb = GDB(gdb_path, fc_points, fc_lines, table_photos)
-kmz.process(gdb)
+data.process(gdb)
