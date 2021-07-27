@@ -12,35 +12,46 @@ RE_DATE = re.compile('([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])T([0-9][0-
 RE_IMG = re.compile('<img src="(images[^"]*)"')
 
 def sanitizeFilename (filename):
-    validfilechars = "-_.() abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    validfilechars = "!@#$%^&()[]{};-_+=\'~,. abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     return ''.join (c for c in filename if c in validfilechars)
 
 class KMZ:
-    def __init__(self, filepath):
+    def __init__(self, filepath, photos_path):
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
         self.dirname = os.path.dirname(filepath)
-        self.photodir = self.dirname + '/KMZPhotos/'
+        self.photodir = os.path.join (self.dirname, photos_path)
 
-    def open(self):
-        if os.access (self.filepath, os.R_OK):
-            self.kmz = zipfile.ZipFile(self.filepath, 'r')
-        else:
-            print ('KMZtoGDB: could not open KMZ: ' + self.filepath)
-            sys.exit(1)
+        # The below is not necessary, since the ArcToolbox already does file existence checking.
+        #try:
+        #    self.kmz = zipfile.ZipFile(self.filepath, 'r')
+        #except IOError as e:
+        #    if e.errno == errno.EACCES:
+        #        raise IOError ("Permission denied when trying to access KMZ.")
+        #    raise
+        #TODO Handle kml files
+        self.kmz = zipfile.ZipFile(self.filepath, 'r')
+
+        if not os.path.isdir(self.photodir) and os.path.isfile(self.photodir):
+            raise IOError ("Photo directory is a file. Choose a folder to save photos.")
+        elif not os.path.isdir(self.photodir):
+            try:
+                os.mkdir(self.photodir)
+            except IOError as e:
+                if e.errno == errno.EACCES:
+                    raise IOError ("Permission denied when trying to create photo directory.")
+                raise
 
     def getDOM (self):
         kml = 'doc.kml'
-        if kml in self.kmz.namelist():
+        try:
             return parseDOM(self.kmz.open(kml))
-        else:
-            print ('KMZtoGDB: invalid KMZ.')
-            sys.exit(1)
+        except:
+            raise IOError ("Invalid KMZ.")
 
-    def process(self, gdbpath):
+    def process(self, gdb):
         kmzDOM = self.getDOM()
         domPlacemarks = kmzDOM.getElementsByTagName("Placemark")
-        gdb = GDB (gdbpath)
         gdb.startEditing()
 
         photoList = {}
@@ -60,45 +71,60 @@ class KMZ:
                     if not kmzPhotoPath in photoList.keys():
                         print ("problem with " + photo)
                     else:
-                        path = self.photodir + photoList[kmzPhotoPath]
+                        path = os.path.join (self.photodir, photoList[kmzPhotoPath])
                         try:
                             with open(path, 'wb') as f:
                                 f.write(self.kmz.read(photo))
                         except:
-                            print ("problem writing " + kmzPhotoPath + " to " + path)
-                            raise
+                            raise IOError ("Problem writing " + kmzPhotoPath + " to " + path)
 
         gdb.stopEditing(True)
 
 class GDB:
-    def __init__(self, gdbpath):
+    def __init__ (self, gdbpath, fc_points='KMLPoint', fc_lines='KMLLine', table_photos='Photos'):
         self.gdbpath = gdbpath
+        self.fc_points = fc_points
+        self.fc_lines = fc_lines
+        self.table_photos = table_photos
+
         self.projectFolder = os.path.dirname(gdbpath)
-        photo_dir = self.projectFolder + '/KMZPhotos'
+
+        # The below is not necessary, since the ArcToolbox already does file existence checking.
+        #if not arcpy.Exists(self.gdbpath):
+        #    arcpy.CreateFileGDB_management(self.projectFolder, os.path.basename(self.gdbpath))
 
         arcpy.env.workspace = self.gdbpath
-
-        self.fc_points = 'KMLPoint'
         self.attr_points = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
-
-        self.fc_lines = 'KMLLine'
         self.attr_lines = ['Name', 'Description', 'Date', 'Origin_file', 'SHAPE@']
-
-        self.table_photos = 'Photos'
         self.attr_photos = ['Feature_Type', 'Feature_OBJECTID', 'Photo_Path']
+
+        if not arcpy.Exists(self.fc_points):
+            fc = arcpy.CreateFeatureclass_management(self.gdbpath, self.fc_points, "POINT", spatial_reference=Feature.albers_sr)
+            arcpy.AddField_management(fc, 'Name', 'TEXT', field_length=200, field_is_required="REQUIRED")
+            arcpy.AddField_management(fc, 'Description', 'TEXT', field_length=1000)
+            arcpy.AddField_management(fc, 'Date', 'DATE', field_is_required="REQUIRED")
+            arcpy.AddField_management(fc, 'Origin_file', 'TEXT', field_length=250)
+        if not arcpy.Exists(self.fc_lines):
+            fc = arcpy.CreateFeatureclass_management(self.gdbpath, self.fc_lines, "POLYLINE", spatial_reference=Feature.albers_sr)
+            arcpy.AddField_management(fc, 'Name', 'TEXT', field_length=200, field_is_required="REQUIRED")
+            arcpy.AddField_management(fc, 'Description', 'TEXT', field_length=1000)
+            arcpy.AddField_management(fc, 'Date', 'DATE', field_is_required="REQUIRED")
+            arcpy.AddField_management(fc, 'Origin_file', 'TEXT', field_length=250)
+        if not arcpy.Exists(self.table_photos):
+            table = arcpy.CreateTable_management(self.gdbpath, self.table_photos)
+            arcpy.AddField_management(table, 'Feature_Type', 'TEXT', field_length=10)
+            arcpy.AddField_management(table, 'Feature_OBJECTID', 'LONG')
+            arcpy.AddField_management(table, 'Photo_Path', 'TEXT', field_length=1000)
 
         gdbSchema = arcpy.ListFeatureClasses() + arcpy.ListTables()
         for fc in [self.fc_points, self.fc_lines, self.table_photos]:
             if fc not in gdbSchema:
-                print ("Unrecognized geodatabase")
-                sys.exit(1)
+                raise IOError ("Unable to verify or create geodatabase.")
 
     def startEditing(self):
         self.editor = arcpy.da.Editor(self.gdbpath)
         self.editor.startEditing()
         self.editor.startOperation()
-        #self.search = {'Point':    arcpy.da.SearchCursor (self.fc_points, self.attr_points),
-        #               'Polyline': arcpy.da.SearchCursor (self.fc_lines, self.attr_lines)}
         self.cursor = {'Point':    arcpy.da.InsertCursor (self.fc_points, self.attr_points),
                        'Polyline': arcpy.da.InsertCursor (self.fc_lines, self.attr_lines),
                        'Photos':   arcpy.da.InsertCursor (self.table_photos, self.attr_photos)}
@@ -130,8 +156,6 @@ class GDB:
             raise
         if len(feature.photos) > 0:
             for kmzPhotoPath, gdbPhotoPath in feature.photos: # kmzPhotoPath not used here
-                # set photopath to be <kmz filename w/o .kmz>_<photo name>.jpg
-                #photopath = feature.filename[:-4] + '_' + photo[len('images/'):]
                 try:
                     self.cursor['Photos'].insertRow ((feature.featureType, objectid, gdbPhotoPath))
                 except RuntimeError:
@@ -210,7 +234,7 @@ class Feature:
         photoList = []
         for photo in RE_IMG.findall(raw):
             kmzImagePath = sanitizeFilename(photo[len('images/'):])
-            gdbImagePath = self.filename[:-4] + '_' + kmzImagePath
+            gdbImagePath = self.filename[:-4] + '_' + kmzImagePath # [:-4] removes file extension
             photoList.append([kmzImagePath, gdbImagePath]) 
 
         return photoList
@@ -229,7 +253,18 @@ class Feature:
 
         return description, photos
 
-def KMZtoGDB(**kwargs):
+def DeactivateKMZtoGDB(**kwargs):
     kmz = KMZ(kwargs.get('kmz'))
     kmz.open()
     kmz.process(kwargs.get('gdb'))
+
+kmz_path     = arcpy.GetParameterAsText(1)
+gdb_path     = arcpy.GetParameterAsText(2)
+fc_points    = arcpy.GetParameterAsText(3)
+fc_lines     = arcpy.GetParameterAsText(4)
+table_photos = arcpy.GetParameterAsText(5)
+photos_path  = arcpy.GetParameterAsText(6)
+
+kmz = KMZ(kmz_path, photos_path)
+gdb = GDB(gdb_path, fc_points, fc_lines, table_photos)
+kmz.process(gdb)
