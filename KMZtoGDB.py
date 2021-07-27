@@ -174,11 +174,15 @@ class GDB:
         return arcpy.da.SearchCursor (fc, attr, where_clause=where)
 
     def insertRowIfNew (self, feature):
-        if len(list(self.searchRow(feature))) == 0:
-            self.insertRow (feature)
-            return True
-        else:
-            return False
+        try:
+            if len(list(self.searchRow(feature))) == 0:
+                self.insertRow (feature)
+                return True
+            else:
+                return False
+        except:
+            self.stopEditing(False)
+            raise
 
     def insertRow (self, feature):
         try: 
