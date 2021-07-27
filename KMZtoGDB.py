@@ -113,11 +113,12 @@ class KMZ (KML):
         gdb.stopEditing(True)
 
 class GDB:
-    def __init__ (self, gdbpath, fc_points='KMLPoint', fc_lines='KMLLine', table_photos='Photos'):
+    def __init__ (self, gdbpath, fc_points='KMLPoint', fc_lines='KMLLine', table_photos='Photos', photos_path='KMZPhotos'):
         self.gdbpath = gdbpath
         self.fc_points = fc_points
         self.fc_lines = fc_lines
         self.table_photos = table_photos
+        self.photos_dir = photos_path
 
         self.projectFolder = os.path.dirname(gdbpath)
 
@@ -192,6 +193,7 @@ class GDB:
             raise arcpy.ExecuteError
         if len(feature.photos) > 0:
             for kmzPhotoPath, gdbPhotoPath in feature.photos: # kmzPhotoPath not used here
+                gdbPhotoPath = os.path.join(self.projectFolder, self.photos_dir, gdbPhotoPath)
                 try:
                     self.cursor['Photos'].insertRow ((feature.featureType, objectid, gdbPhotoPath))
                 except RuntimeError:
