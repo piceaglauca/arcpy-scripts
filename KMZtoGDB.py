@@ -7,7 +7,7 @@ import datetime
 import argparse
 import arcpy
 
-RE_COORDS = re.compile('(-?[0-9]+\.[0-9]+),([0-9]+\.[0-9]+),')
+RE_COORDS = re.compile('(-?[0-9]+\.[0-9]+)[, ]([0-9]+\.[0-9]+)[, ]')
 RE_DATE = re.compile('([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])T([0-9][0-9]):([0-9][0-9]):([0-9][0-9])')
 RE_IMG = re.compile('<img src="(images[^"]*)"')
 
@@ -224,7 +224,11 @@ class Feature:
         return (self.name, self.description, self.date, self.filename, self.shape)
 
     def getName(self):
-        name = self.dom.getElementsByTagName("name")[0].childNodes[0].data
+        raw = self.dom.getElementsByTagName("name")
+        if len(raw) == 0:
+            return "unnamed-%s" % (datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"))
+
+        name = raw[0].childNodes[0].data
 
         prefix="<![CDATA["
         suffix="]]>"
@@ -238,7 +242,11 @@ class Feature:
         return name
 
     def getDate(self):
-        raw = self.dom.getElementsByTagName("when")[0].childNodes[0].data
+        raw = self.dom.getElementsByTagName("TimeStamp")[0].getElementsByTagName("when")
+        if len(raw) == 0:
+            return datetime.datetime(1,1,1,0,0,0)
+
+        raw = raw[0].childNodes[0].data
         match = RE_DATE.search(raw)
         return datetime.datetime(int(match.group(1)),
                                  int(match.group(2)),
@@ -248,9 +256,15 @@ class Feature:
                                  int(match.group(6)))
 
     def getShape(self):
-        raw = self.dom.getElementsByTagName("coordinates")[0].childNodes[0].data
+        raw = self.dom.getElementsByTagName("coordinates")
 
-        match = RE_COORDS.findall(raw, re.MULTILINE)
+        if len(raw) == 0: # Tracks store coordinates differently
+            match = []
+            for coord in self.dom.getElementsByTagName("gx:coord"):
+                match.append(RE_COORDS.match(coord.childNodes[0].data).group(1,2))
+        else: # Points and Lines
+            match = RE_COORDS.findall(raw[0].childNodes[0].data, re.MULTILINE)
+
         points = []
         for coord in match:
             points.append(arcpy.Point(coord[0], coord[1]))
