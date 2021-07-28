@@ -19,7 +19,6 @@ class KML:
     def __init__(self, filepath):
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
-        self.dirname = os.path.dirname(filepath)
 
         self.open()
 
@@ -56,7 +55,7 @@ class KML:
 class KMZ (KML):
     def __init__(self, filepath, photos_path):
         KML.__init__(self, filepath)
-        self.photodir = os.path.join (self.dirname, photos_path)
+        self.photodir = photos_path
 
         if not os.path.isdir(self.photodir) and os.path.isfile(self.photodir):
             arcpy.AddError ("Photo directory is a file. Choose a folder to save photos.")
@@ -242,11 +241,12 @@ class Feature:
         return name
 
     def getDate(self):
-        raw = self.dom.getElementsByTagName("TimeStamp")[0].getElementsByTagName("when")
+        raw = self.dom.getElementsByTagName("TimeStamp")
         if len(raw) == 0:
             return datetime.datetime(1,1,1,0,0,0)
+        else:
+            raw = raw[0].getElementsByTagName("when")[0].childNodes[0].data
 
-        raw = raw[0].childNodes[0].data
         match = RE_DATE.search(raw)
         return datetime.datetime(int(match.group(1)),
                                  int(match.group(2)),
@@ -327,6 +327,6 @@ fc_lines     = arcpy.GetParameterAsText(4)
 table_photos = arcpy.GetParameterAsText(5)
 photos_path  = arcpy.GetParameterAsText(6)
 
-data = getDataObj(kmz_path, photos_path)
+data = getDataObj(kmz_path, os.path.join(os.path.dirname(gdb_path), photos_path))
 gdb = GDB(gdb_path, fc_points, fc_lines, table_photos)
 data.process(gdb)
