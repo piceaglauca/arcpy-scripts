@@ -8,7 +8,7 @@ def uniqueNumber():
 albers=arcpy.SpatialReference(3005)
 utm=arcpy.SpatialReference(26909)
 
-file=open('N:/Strategic_Group/Projects/21-1547-30 Galore Creek Mine Access Study/Phase/GeoData_Working/grades.csv','r')
+file=open('N:/Strategic_Group/Projects/21-1547-30 Galore Creek Mine Access Study/Phase/GeoData_Working/bc_000_grades.csv','r')
 reader=csv.reader(file)
 rows=[]
 for row in reader:
@@ -17,7 +17,7 @@ file.close()
 
 rows=rows[1:]
 
-gdb='G:/Projects/Various_Clients/Galore Creek/WorkingData.gdb'
+gdb='G:/Projects/Various_Clients/Galore Creek/Mapping_Data.gdb'
 arcpy.env.workspace = gdb
 editor=arcpy.da.Editor(gdb)
 cleanup_fcs=[]
@@ -95,7 +95,7 @@ except:
 
 fc_splitroad = 'temp_{}'.format(uniqueNumber())
 try:
-    arcpy.SplitLineAtPoint_management('FEL2A_LLine_MAPPING_PURPOSES', fc_splitpoints, fc_splitroad, "1 Meter")
+    arcpy.SplitLineAtPoint_management('FEL2A_LLine/LLine', fc_splitpoints, fc_splitroad, "1 Meter")
     cleanup_fcs.append(fc_splitroad)
 except:
     editor.stopOperation()
@@ -117,7 +117,7 @@ def isCoincident(line, points):
            (approxEqual(line.lastPoint, points[0].firstPoint) and
                 approxEqual(line.firstPoint, points[1].firstPoint)) 
 
-search = arcpy.da.SearchCursor(fc_splitroad, ['SHAPE@','Road_Name','Road_Code'])
+search = arcpy.da.SearchCursor(fc_splitroad, ['SHAPE@','RoadName','RoadCode'])
 steepPolylines = []
 for steepSegment in steepSegments:
     for segment in search:
@@ -130,19 +130,12 @@ for steepSegment in steepSegments:
 #########
 ### Insert steep segments into FEL2A_LLine_SteepGrades
 
-fc_steepgrades_anuk = 'FEL2A_LLine_SteepGrades_Anuk'
-fc_steepgrades_asr = 'FEL2A_LLine_SteepGrades'
+fc_steepgrades = 'FEL2A_LLine/SteepGrade'
 try:
     editor.startEditing()
     editor.startOperation()
-    anuk_cursor=arcpy.da.InsertCursor(fc_steepgrades_anuk, ['SHAPE@','Road_Name','Road_Code','Grade'])
-    asr_cursor=arcpy.da.InsertCursor(fc_steepgrades_asr, ['SHAPE@','Road_Name','Road_Code','Grade'])
+    cursor=arcpy.da.InsertCursor(fc_steepgrades, ['SHAPE@','Road_Name','Road_Code','Grade'])
     for segment in steepPolylines:
-        cursor = None
-        if segment.roadCode.startswith('AN'):
-            cursor = anuk_cursor
-        else:
-            cursor = asr_cursor
         cursor.insertRow ((segment.polyline, segment.roadName, segment.roadCode, segment.grade))
     editor.stopOperation()
     editor.stopEditing(True)

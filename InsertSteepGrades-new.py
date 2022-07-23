@@ -8,14 +8,35 @@ def uniqueNumber():
 albers=arcpy.SpatialReference(3005)
 utm=arcpy.SpatialReference(26909)
 
-file=open('N:/Strategic_Group/Projects/21-1547-30 Galore Creek Mine Access Study/Phase/GeoData_Working/BC_122 templ opt4.csv','r')
+########
+### Process data
+
+file=open('N:/Strategic_Group/Projects/21-1547-30 Galore Creek Mine Access Study/Phase/GeoData_Working/BC_122 grades-combined.csv','r')
 reader=csv.reader(file)
 rows=[]
+steepSegments = {}
 for row in reader:
-    rows.append(row)
+    #rows.append(row)
+    if row[1] == 'Grade' or row[1] = '':
+        continue
+    else:
+        roadCode = row[0]
+        grade = abs(int(row[1]))
+        startX = row[2]
+        startY = row[3]
+        endX = row[4]
+        endY = row[5]
+
+        start=arcpy.PointGeometry(arcpy.Point(startX, startY), utm).projectAs(albers)
+        end=arcpy.PointGeometry(arcpy.Point(endX, endY), utm).projectAs(albers)
+
+    if roadCode not in steepSegments.keys():
+        steepSegments[roadCode] = []
+
+    steepSegments[roadCode].append(SteepSegment(roadCode, grade, start, end))
 file.close()
 
-rows=rows[1:]
+#rows=rows[1:]
 
 gdb='G:/Projects/Various_Clients/Galore Creek/Cleanup.gdb'
 arcpy.env.workspace = gdb
@@ -39,11 +60,11 @@ def cleanup():
             raise ("problem cleaning up")
 
 
-class TemplateSegment:
-    def __init__(self, road, template, start, end):
+class SteepSegment:
+    def __init__(self, road, grade, start, end):
         self.roadName = None
         self.roadCode = road
-        self.template = template
+        self.grade = grade
         self.start = start
         self.end = end
         self.polyline = None
@@ -53,7 +74,7 @@ class TemplateSegment:
 ### Insert split points into temp feature class
 
 fc_splitpoints = 'temp_{}'.format(uniqueNumber())
-templateSegments = []
+#steepSegments = []
 try:
     arcpy.CreateFeatureclass_management(gdb, fc_splitpoints, "POINT", spatial_reference=albers)
     cleanup_fcs.append(fc_splitpoints)
@@ -62,15 +83,15 @@ try:
     editor.startOperation()
     cursor=arcpy.da.InsertCursor(fc_splitpoints,['SHAPE@'])
     splitPoints = []
-    for row in rows:
-        roadCode=row[0]
-        template=row[1]
-        startX=row[2]
-        startY=row[3]
-        endX=row[4]
-        endY=row[5]
-        start=arcpy.PointGeometry(arcpy.Point(startX, startY), utm).projectAs(albers)
-        end=arcpy.PointGeometry(arcpy.Point(endX, endY), utm).projectAs(albers)
+    #for row in rows:
+        #road=row[0]
+        #grade=abs(int(row[1]))
+        #startX=row[2]
+        #startY=row[3]
+        #endX=row[4]
+        #endY=row[5]
+        #start=arcpy.PointGeometry(arcpy.Point(startX, startY), utm).projectAs(albers)
+        #end=arcpy.PointGeometry(arcpy.Point(endX, endY), utm).projectAs(albers)
 
         if start not in splitPoints:
             splitPoints.append(start)
@@ -79,7 +100,7 @@ try:
             splitPoints.append(end)
             cursor.insertRow(end)
 
-        templateSegments.append(TemplateSegment(roadCode, template, start, end))
+        steepSegments.append(SteepSegment(road, grade, start, end))
 
     editor.stopOperation()
     editor.stopEditing(True)
@@ -104,7 +125,7 @@ except:
     raise
 
 #########
-### Get template segments from fc_splitroad
+### Get steep segments from fc_splitroad
 
 def isCoincident(line, points):
     "Return True if the beginning and end of line is in points"
@@ -118,25 +139,25 @@ def isCoincident(line, points):
                 approxEqual(line.firstPoint, points[1].firstPoint)) 
 
 search = arcpy.da.SearchCursor(fc_splitroad, ['SHAPE@','RoadName','RoadCode'])
-templatePolylines = []
-for templateSegment in templateSegments:
+steepPolylines = []
+for steepSegment in steepSegments:
     for segment in search:
-        if isCoincident(segment[0], (templateSegment.start, templateSegment.end)):
-            templateSegment.polyline = segment[0]
-            templateSegment.roadName = segment[1]
-            templatePolylines.append(templateSegment)
+        if isCoincident(segment[0], (steepSegment.start, steepSegment.end)):
+            steepSegment.polyline = segment[0]
+            steepSegment.roadName = segment[1]
+            steepPolylines.append(steepSegment)
     search.reset()
 
 #########
-### Insert template segments into FEL2A_LLine_RoadTemplateSections
+### Insert steep segments into FEL2A_LLine_SteepGrades
 
-fc_templates = 'FEL2A_LLine/RoadTemplate'
+fc_steepgrades = 'FEL2A_LLine/SteepGrade'
 try:
     editor.startEditing()
     editor.startOperation()
-    cursor=arcpy.da.InsertCursor(fc_templates, ['SHAPE@','RoadName','RoadCode','Template'])
-    for segment in templatePolylines:
-        cursor.insertRow ((segment.polyline, segment.roadName, segment.roadCode, segment.template))
+    cursor=arcpy.da.InsertCursor(fc_steepgrades, ['SHAPE@','Road_Name','Road_Code','Grade'])
+    for segment in steepPolylines:
+        cursor.insertRow ((segment.polyline, segment.roadName, segment.roadCode, segment.grade))
     editor.stopOperation()
     editor.stopEditing(True)
 except:

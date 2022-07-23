@@ -1,9 +1,11 @@
 import csv
 import arcpy
-albers=arcpy.SpatialReference(3005)
+
+#albers=arcpy.SpatialReference(3005)
+albers=arcpy.SpatialReference(26909) # we're not using Albers anymore
 utm=arcpy.SpatialReference(26909)
 
-gdb='G:/Projects/Various_Clients/Galore Creek/WorkingData.gdb'
+gdb='G:/Projects/Various_Clients/Galore Creek/Mapping_Data.gdb'
 arcpy.env.workspace = gdb
 editor=arcpy.da.Editor(gdb)
 editor.startEditing()
@@ -12,15 +14,15 @@ editor.startOperation()
 ##
 # Get bridges from templates layer
 
-cursor=arcpy.da.SearchCursor("FEL2A_LLine_RoadTemplateSections",
-                             ['SHAPE@','Road_Name','Road_Code'],
-                             u"{} like 'BR%' and {} in ('South More','Anuk')".format(
-                                arcpy.AddFieldDelimiters("FEL2A_LLine_RoadTemplateSections",'Template'),
-                                arcpy.AddFieldDelimiters("FEL2A_LLine_RoadTemplateSections",'Road_Name')))
+cursor=arcpy.da.SearchCursor("FEL2A_LLine/RoadTemplate",
+                             ['SHAPE@','RoadName','RoadCode'],
+                             u"{} like 'BR%' and {} like '2021-005J%'".format(
+                                arcpy.AddFieldDelimiters("FEL2A_LLine/RoadTemplate",'Template'),
+                                arcpy.AddFieldDelimiters("FEL2A_LLine/RoadTemplate",'RoadCode')))
 
 results=list(cursor)
 
-cursor=arcpy.da.InsertCursor('Bridges_Proposed',['Road_Name','Road_Code','LOA','SHAPE@'])
+cursor=arcpy.da.InsertCursor('Bridges',['RoadName','RoadCode','LOA','SHAPE@'])
 
 try:
     for row in results:
